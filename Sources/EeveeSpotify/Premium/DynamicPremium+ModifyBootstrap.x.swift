@@ -38,6 +38,7 @@ class SpotifySessionDelegateBootstrapHook: ClassHook<NSObject>, SpotifySessionDe
         }
         
         if url.isBootstrap {
+            writeDebugLog("Bootstrap didReceiveData: \(url.absoluteString) (+\(data.count) bytes)")
             URLSessionHelper.shared.setOrAppend(data, for: url)
             return
         }
@@ -59,6 +60,7 @@ class SpotifySessionDelegateBootstrapHook: ClassHook<NSObject>, SpotifySessionDe
         
         if error == nil && url.isBootstrap {
             let buffer = URLSessionHelper.shared.obtainData(for: url)!
+            writeDebugLog("Bootstrap buffer size: \(buffer.count) bytes")
             
             do {
                 var bootstrapMessage = try BootstrapMessage(serializedBytes: buffer)
@@ -66,16 +68,21 @@ class SpotifySessionDelegateBootstrapHook: ClassHook<NSObject>, SpotifySessionDe
                 if UserDefaults.patchType == .notSet {
                     if bootstrapMessage.attributes["type"]?.stringValue == "premium" {
                         UserDefaults.patchType = .disabled
+                        writeDebugLog("Bootstrap first-time: account type=premium")
                         showHavePremiumPopUp()
                     }
                     else {
                         UserDefaults.patchType = .requests
+                        let accountType = bootstrapMessage.attributes["type"]?.stringValue ?? "unknown"
+                        writeDebugLog("Bootstrap first-time: account type=\(accountType)")
+                        writeDebugLog("Bootstrap: patchType set to .requests")
                         activatePremiumPatchingGroup()
                     }
                     
                 }
                 
                 if UserDefaults.patchType == .requests {
+                    writeDebugLog("Bootstrap: modifying response to premium")
                     modifyRemoteConfiguration(&bootstrapMessage.ucsResponse)
                     
                     orig.URLSession(
@@ -83,7 +90,7 @@ class SpotifySessionDelegateBootstrapHook: ClassHook<NSObject>, SpotifySessionDe
                         dataTask: task,
                         didReceiveData: try bootstrapMessage.serializedBytes()
                     )
-                    
+                    writeDebugLog("Bootstrap: premium response sent successfully")
                 }
                 else {
                     orig.URLSession(session, dataTask: task, didReceiveData: buffer)

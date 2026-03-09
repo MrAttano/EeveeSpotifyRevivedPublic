@@ -23,6 +23,19 @@ func writeDebugLog(_ message: String) {
     }
 }
 
+// Timestamp of tweak initialization — persists across Orion reinits within the same process
+// using an environment variable. This prevents the 30s auth window from resetting
+// when the C++ timer triggers a session reinit cycle.
+let tweakInitTime: Date = {
+    if let existing = getenv("EEVEE_BOOT_TIME"),
+       let interval = Double(String(cString: existing)) {
+        return Date(timeIntervalSince1970: interval)
+    }
+    let now = Date()
+    setenv("EEVEE_BOOT_TIME", "\(now.timeIntervalSince1970)", 1)
+    return now
+}()
+
 func exitApplication() {
     UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
     Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
@@ -85,7 +98,21 @@ struct EeveeSpotify: Tweak {
     init() {
         NSLog("[EeveeSpotify] Swift tweak initialization starting...")
         writeDebugLog("Swift tweak initialization starting")
-        
+
+        // Activate session logout protection first (all versions)
+        for className in ["ARTWebSocketTransport", "ARTSRWebSocket",
+                          "SPTAuthSessionImplementation", "SPTAuthLegacyLoginControllerImplementation",
+                          "_TtC24Connectivity_SessionImpl18SessionServiceImpl",
+                          "_TtC24Connectivity_SessionImplP33_831B98CC28223E431E21CD27ADD20AF222OauthAccessTokenBridge",
+                          "SPTDataLoaderService",
+                          "NSURLSessionTask"] {
+            let exists = NSClassFromString(className) != nil
+            writeDebugLog("🔬 Class probe: \(className) = \(exists ? "EXISTS ✅" : "MISSING ❌")")
+        }
+        SessionLogoutHookGroup().activate()
+        writeDebugLog("✅ SessionLogoutHookGroup activated (Ably + SPTAuth + TokenExpiry hooks live)")
+        writeDebugLog("🔒 Session protection: logout chain + token expiry + Ably + network blocking")
+
         NSLog("[EeveeSpotify] ========================================")
         NSLog("[EeveeSpotify] Detecting Spotify version...")
         NSLog("[EeveeSpotify] Bundle version: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")

@@ -11,6 +11,10 @@ private var lastPopupTime: Date?
 private var capturedURLs: [String] = []
 private var isCapturingURLs = false
 
+// --- Full URL logging for logout diagnosis ---
+private var allRequestLog: [(Date, String, Int)] = []  // (time, path, statusCode)
+private let logStartTime = Date()
+
 // Helper function to start capturing from other files
 func DataLoaderServiceHooks_startCapturing() {
     isCapturingURLs = true
@@ -19,7 +23,20 @@ func DataLoaderServiceHooks_startCapturing() {
 
 class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
     static let targetName = "SPTDataLoaderService"
-    
+
+    // orion:new
+    static var cachedCustomizeData: Data?
+
+    // orion:new
+    static var handledCustomizeTasks = Set<Int>()
+
+    // orion:new
+    func shouldBlock(_ url: URL) -> Bool {
+        return url.isDeleteToken || url.isAccountValidate || url.isOndemandSelector
+            || url.isTrialsFacade || url.isPremiumMarketing || url.isPendragonFetchMessageList
+            || url.isSessionInvalidation || url.isPushkaTokens
+    }
+
     // orion:new
     func shouldModify(_ url: URL) -> Bool {
         let shouldPatchPremium = BasePremiumPatchingGroup.isActive
@@ -37,6 +54,38 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
     func respondWithCustomData(_ data: Data, task: URLSessionDataTask, session: URLSession) {
         orig.URLSession(session, dataTask: task, didReceiveData: data)
     }
+
+    // orion:new
+    func handleBlockedEndpoint(_ url: URL, task: URLSessionDataTask, session: URLSession) {
+        if url.isDeleteToken {
+            writeDebugLog("🚫 DeleteToken BLOCKED — returning fake success")
+            respondWithCustomData(Data(), task: task, session: session)
+        } else if url.isAccountValidate {
+            writeDebugLog("🚫 AccountValidate BLOCKED — returning cached status")
+            let response = "{\"status\":1,\"country\":\"US\",\"is_country_launched\":true}".data(using: .utf8)!
+            respondWithCustomData(response, task: task, session: session)
+        } else if url.isOndemandSelector {
+            writeDebugLog("🚫 OndemandSelector: replaced with empty proto")
+            respondWithCustomData(Data(), task: task, session: session)
+        } else if url.isTrialsFacade {
+            writeDebugLog("🚫 TrialsFacade: replaced with NOT_ELIGIBLE")
+            let response = "{\"result\":\"NOT_ELIGIBLE\"}".data(using: .utf8)!
+            respondWithCustomData(response, task: task, session: session)
+        } else if url.isPremiumMarketing {
+            writeDebugLog("🚫 PremiumMarketing: replaced with {}")
+            respondWithCustomData("{}".data(using: .utf8)!, task: task, session: session)
+        } else if url.isPendragonFetchMessageList {
+            writeDebugLog("🚫 Pendragon FetchMessageList: blocked — sending empty response")
+            respondWithCustomData(Data(), task: task, session: session)
+        } else if url.isPushkaTokens {
+            writeDebugLog("🚫 PushkaTokens BLOCKED: \(url.path)")
+            respondWithCustomData(Data(), task: task, session: session)
+        } else if url.isSessionInvalidation {
+            writeDebugLog("🚫 SessionInvalidation BLOCKED: \(url.path)")
+            respondWithCustomData(Data(), task: task, session: session)
+        }
+        orig.URLSession(session, task: task, didCompleteWithError: nil)
+    }
     
     func URLSession(
         _ session: URLSession,
@@ -49,6 +98,33 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
            let auth = headers["Authorization"] ?? headers["authorization"],
            auth.hasPrefix("Bearer ") {
             spotifyAccessToken = String(auth.dropFirst(7))
+        }
+
+        // Log HTTP errors that could trigger session invalidation
+        if let httpResponse = task.response as? HTTPURLResponse,
+           let url = task.currentRequest?.url {
+            let status = httpResponse.statusCode
+            // Log ALL requests with their status codes for logout diagnosis
+            let path = url.path
+            let elapsed = Int(Date().timeIntervalSince(logStartTime))
+            if status >= 400 {
+                writeDebugLog("🌐 [\(elapsed)s] HTTP \(status) \(url.host ?? "")\(path)")
+            } else {
+                // Log all requests but with compact format to avoid log bloat
+                writeDebugLog("🌐 [\(elapsed)s] \(status) \(path)")
+            }
+            if status == 401 || status == 403 {
+                writeDebugLog("⚠️ HTTP \(status) on \(path) — potential session trigger")
+            }
+        } else if let url = task.currentRequest?.url {
+            // No HTTP response (possibly failed)
+            let path = url.path
+            let elapsed = Int(Date().timeIntervalSince(logStartTime))
+            if let error = error {
+                writeDebugLog("🌐 [\(elapsed)s] FAIL \(path) — \(error.localizedDescription)")
+            } else {
+                writeDebugLog("🌐 [\(elapsed)s] ??? \(path)")
+            }
         }
 
         // Log request headers FIRST for ALL requests to lyrics endpoints
@@ -129,6 +205,18 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
         if url.path.contains("color-lyrics") || url.path.contains("lyrics") {
         }
         
+        // Handle blocked endpoints (session protection)
+        if shouldBlock(url) {
+            handleBlockedEndpoint(url, task: task, session: session)
+            return
+        }
+
+        // Handle customize 304 that was already served in didReceiveResponse
+        if SPTDataLoaderServiceHook.handledCustomizeTasks.remove(task.taskIdentifier) != nil {
+            orig.URLSession(session, task: task, didCompleteWithError: nil)
+            return
+        }
+
         guard error == nil, shouldModify(url) else {
             orig.URLSession(session, task: task, didCompleteWithError: error)
             return
@@ -145,6 +233,12 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
         }
         
         guard let buffer = URLSessionHelper.shared.obtainData(for: url) else {
+            // Customize 304 fallback: serve cached modified data when no buffer available
+            if url.isCustomize, let cached = SPTDataLoaderServiceHook.cachedCustomizeData {
+                writeDebugLog("Customize: using cached modified response (no buffer)")
+                respondWithCustomData(cached, task: task, session: session)
+                orig.URLSession(session, task: task, didCompleteWithError: nil)
+            }
             return
         }
         
@@ -229,7 +323,10 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
             if url.isCustomize {
                 var customizeMessage = try CustomizeMessage(serializedBytes: buffer)
                 modifyRemoteConfiguration(&customizeMessage.response)
-                respondWithCustomData(try customizeMessage.serializedData(), task: task, session: session)
+                let modifiedData = try customizeMessage.serializedData()
+                SPTDataLoaderServiceHook.cachedCustomizeData = modifiedData
+                writeDebugLog("Customize: modified and delivered successfully")
+                respondWithCustomData(modifiedData, task: task, session: session)
                 orig.URLSession(session, task: task, didCompleteWithError: nil)
                 return
             }
@@ -251,6 +348,24 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
         didReceiveResponse response: HTTPURLResponse,
         completionHandler handler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
+        // Log 401/403 responses that could trigger session invalidation
+        if response.statusCode == 401 || response.statusCode == 403 {
+            let urlPath = task.currentRequest?.url?.path ?? "unknown"
+            writeDebugLog("⚠️ HTTP \(response.statusCode) response on: \(urlPath)")
+        }
+
+        // Handle customize 304 — prevent free-account data leaking from URLSession cache
+        if let url = task.currentRequest?.url, url.isCustomize, response.statusCode == 304 {
+            if let cached = SPTDataLoaderServiceHook.cachedCustomizeData {
+                writeDebugLog("Customize: 304 intercepted, serving cached modified response")
+                let fakeResponse = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "2.0", headerFields: [:])!
+                orig.URLSession(session, dataTask: task, didReceiveResponse: fakeResponse, completionHandler: handler)
+                respondWithCustomData(cached, task: task, session: session)
+                SPTDataLoaderServiceHook.handledCustomizeTasks.insert(task.taskIdentifier)
+                return
+            }
+        }
+
         guard
             let url = task.currentRequest?.url,
             url.isLyrics,
@@ -277,6 +392,11 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
         didReceiveData data: Data
     ) {
         guard let url = task.currentRequest?.url else {
+            return
+        }
+
+        // Suppress data for blocked endpoints (prevent original data from reaching handler)
+        if shouldBlock(url) {
             return
         }
 
