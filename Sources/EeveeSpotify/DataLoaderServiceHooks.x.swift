@@ -59,7 +59,7 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
 
     // orion:new
     func shouldModify(_ url: URL) -> Bool {
-        let shouldPatchPremium = BasePremiumPatchingGroup.isActive
+        let shouldPatchPremium = BasePremiumPatchingGroup.isActive || PremiumBootstrapGroup.isActive
         let shouldReplaceLyrics = BaseLyricsGroup.isActive
         
         let isLyricsURL = url.isLyrics
