@@ -85,6 +85,7 @@ class SpotifySessionDelegateBootstrapHook: ClassHook<NSObject>, SpotifySessionDe
                 
                 if UserDefaults.patchType == .requests {
                     writeDebugLog("[BOOTSTRAP] Patching bootstrap UCS response")
+                    UserDefaults.hasPatchedBootstrap = true
                     modifyRemoteConfiguration(&bootstrapMessage.ucsResponse)
                     
                     orig.URLSession(
