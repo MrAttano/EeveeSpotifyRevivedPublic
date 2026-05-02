@@ -224,6 +224,7 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
                 var bootstrapMessage = try BootstrapMessage(serializedBytes: buffer)
                 writeDebugLog("[BOOTSTRAP] (DL) Patching bootstrap UCS response")
                 UserDefaults.hasPatchedBootstrap = true
+                EeveeBootstrapProcessGate.hasPatchedBootstrap = true
                 if UserDefaults.patchType == .requests {
                     modifyRemoteConfiguration(&bootstrapMessage.ucsResponse)
                 }

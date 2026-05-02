@@ -339,13 +339,15 @@ class URLSessionTaskResumeHook: ClassHook<NSObject> {
             let elapsedInt = Int(elapsed)
             let path = url.path
 
-            // If we've already patched bootstrap once in this session, block any subsequent
-            // bootstrap calls. Some 9.1.x builds perform a second bootstrap very early during
-            // an internal session re-init, and that second response can overwrite our premium state.
-            // Only cancel *subsequent* bootstrap calls in the same launch cycle.
-            // Never cancel the initial bootstrap during startup, or Spotify can hang on splash.
-            if path.contains("bootstrap/v1/bootstrap"), UserDefaults.hasPatchedBootstrap, elapsed > 5 {
-                writeDebugLog("[NET] Cancelled bootstrap re-fetch at \(elapsedInt)s")
+            // If we've already patched bootstrap once in this OS process, block any subsequent
+            // bootstrap calls. Some 9.1.34+ builds fire a second bootstrap during an internal
+            // session re-init (often right after a blocked `destroy`). That response can be
+            // unpatched free-tier UCS and overwrite premium state.
+            // Use `EeveeBootstrapProcessGate` (not UserDefaults): tweak `init()` runs again on
+            // Orion reinits and used to clear `UserDefaults.hasPatchedBootstrap`, letting the
+            // duplicate bootstrap through while `elapsed` was small again.
+            if path.contains("bootstrap/v1/bootstrap"), EeveeBootstrapProcessGate.hasPatchedBootstrap {
+                writeDebugLog("[NET] Cancelled bootstrap re-fetch (already patched this process) at \(elapsedInt)s")
                 task.cancel()
                 return
             }

@@ -38,6 +38,13 @@ let tweakInitTime: Date = {
     return now
 }()
 
+/// Set after a successful premium bootstrap UCS patch in this app process.
+/// Persists across Orion/tweak `init()` reinits (e.g. after blocked session destroy on 9.1.34+)
+/// so duplicate bootstrap fetches can be cancelled. Resets naturally on process exit.
+enum EeveeBootstrapProcessGate {
+    static var hasPatchedBootstrap: Bool = false
+}
+
 func exitApplication() {
     UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
     Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
@@ -222,9 +229,11 @@ struct EeveeSpotify: Tweak {
     
     init() {
         eeveeBreadcrumb("Tweak init() entered")
-        // Reset per-launch bootstrap state; this MUST NOT persist across restarts.
-        // Otherwise Spotify can get stuck on splash because bootstrap is cancelled.
-        UserDefaults.hasPatchedBootstrap = false
+        // Do not reset `UserDefaults.hasPatchedBootstrap` or `EeveeBootstrapProcessGate` here.
+        // Orion calls this `init()` again after internal session re-inits (seen on 9.1.34+).
+        // Clearing bootstrap flags caused the second bootstrap to run unpatched and overwrite
+        // premium product state with free tier. Process exit clears `EeveeBootstrapProcessGate`;
+        // the URLSession hook uses that flag so the first bootstrap of a new process is never cancelled.
 
         // Global kill-switch for debugging “instant crash / no logs”.
         // If setting this makes Spotify launch, the crash is definitely in one of our hook activations.
