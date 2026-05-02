@@ -1,5 +1,6 @@
 import Orion
 import Foundation
+import ObjectiveC
 
 // MARK: - Session Logout Protection
 // Hooks all logout-related methods to prevent Spotify from logging out
@@ -83,8 +84,9 @@ class SPTAuthSessionHook: ClassHook<NSObject> {
 
     func productStateUpdated(_ state: AnyObject) {
         let elapsed = Int(Date().timeIntervalSince(tweakInitTime))
-        writeDebugLog("[AUTH] productStateUpdated at \(elapsed)s -- \(state)")
-        orig.productStateUpdated(state)
+        let (coerced, didCoerce) = eeveePremiumCoercedProductStateIfNeeded(for: state)
+        writeDebugLog("[AUTH] productStateUpdated at \(elapsed)s didCoerce=\(didCoerce)")
+        orig.productStateUpdated(coerced)
     }
 
     func tryReconnect(_ arg1: AnyObject, toAP arg2: AnyObject) {
@@ -422,4 +424,32 @@ class URLSessionTaskResumeHook: ClassHook<NSObject> {
     }
 }
 
+// MARK: - Minimal 9.1.x — productState coercion (separate Orion group from full auth hooks)
 
+struct SessionPremiumProductStateOnlyHookGroup: HookGroup { }
+
+class SPTAuthSessionPremiumProductOnlyHook: ClassHook<NSObject> {
+    typealias Group = SessionPremiumProductStateOnlyHookGroup
+    static let targetName = "SPTAuthSessionImplementation"
+
+    func productStateUpdated(_ state: AnyObject) {
+        let elapsed = Int(Date().timeIntervalSince(tweakInitTime))
+        let (coerced, didCoerce) = eeveePremiumCoercedProductStateIfNeeded(for: state)
+        writeDebugLog("[AUTH] productStateUpdated at \(elapsed)s didCoerce=\(didCoerce)")
+        orig.productStateUpdated(coerced)
+    }
+}
+
+func activatePremiumProductStateCoercionMinimal91IfEligible() {
+    guard let cls = NSClassFromString("SPTAuthSessionImplementation") else {
+        NSLog("[EeveeSpotify] Skipped productState hook (no SPTAuthSessionImplementation)")
+        return
+    }
+    let sel = NSSelectorFromString("productStateUpdated:")
+    guard class_getInstanceMethod(cls, sel) != nil else {
+        NSLog("[EeveeSpotify] Skipped productState hook (missing productStateUpdated:)")
+        return
+    }
+    SessionPremiumProductStateOnlyHookGroup().activate()
+    NSLog("[EeveeSpotify] Activated minimal productState premium coercion hook")
+}

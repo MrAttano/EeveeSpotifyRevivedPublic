@@ -61,15 +61,17 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
 
     // orion:new
     func shouldModify(_ url: URL) -> Bool {
+        let patchRequests = UserDefaults.patchType.isPatching
         let shouldPatchPremium = BasePremiumPatchingGroup.isActive || PremiumBootstrapGroup.isActive
         let shouldReplaceLyrics = BaseLyricsGroup.isActive
         
         let isLyricsURL = url.isLyrics
         let path = url.path.lowercased()
         let isDAC = path.contains("/dac/view/v1/")
-        
-        return (shouldReplaceLyrics && isLyricsURL)
-            || (shouldPatchPremium && (url.isBootstrap || url.isCustomize || url.isPremiumPlanRow || url.isPremiumBadge || url.isPlanOverview || isDAC))
+        // Bootstrap must patch even while PremiumBootstrapGroup.isActive is briefly false during Orion/session reinits.
+        return (patchRequests && url.isBootstrap)
+            || (shouldReplaceLyrics && isLyricsURL)
+            || (shouldPatchPremium && (url.isCustomize || url.isPremiumPlanRow || url.isPremiumBadge || url.isPlanOverview || isDAC))
     }
     
     // orion:new
@@ -159,6 +161,11 @@ class SPTDataLoaderServiceHook: ClassHook<NSObject>, SpotifySessionDelegate {
         }
         
         guard let buffer = URLSessionHelper.shared.obtainData(for: url) else {
+            if url.isBootstrap {
+                writeDebugLog("[BOOTSTRAP] (DL) No buffered body (delegate/other path consumed it) — completing original")
+                orig.URLSession(session, task: task, didCompleteWithError: error)
+                return
+            }
             // Customize 304 fallback: serve cached modified data when no buffer available
             if url.isCustomize, let cached = SPTDataLoaderServiceHook.cachedCustomizeData {
                 respondWithCustomData(cached, task: task, session: session)

@@ -260,8 +260,9 @@ struct EeveeSpotify: Tweak {
         // NOTE: On some Spotify 9.1.x builds, Orion can still crash even if a selector exists
         // (e.g., method type encoding changes). Be conservative for 9.1.x.
         if EeveeSpotify.hookTarget == .v91 {
-            // Minimal protection only (safest hook)
+            // Minimal URLSession hooks + standalone productState coercion (bootstrap often misses reinits on 9.1.34+).
             activateSessionLogoutProtection(minimal: true)
+            activatePremiumProductStateCoercionMinimal91IfEligible()
         } else {
             activateSessionLogoutProtection(minimal: false)
         }

@@ -102,7 +102,11 @@ class SpotifySessionDelegateBootstrapHook: ClassHook<NSObject>, SpotifySessionDe
                 orig.URLSession(session, task: task, didCompleteWithError: nil)
                 return
             }
-            catch {
+            catch let err {
+                writeDebugLog("[BOOTSTRAP] PROTO decode/patch FAILED — \(err) — forwarding original bootstrap bytes")
+                orig.URLSession(session, dataTask: task, didReceiveData: buffer)
+                orig.URLSession(session, task: task, didCompleteWithError: nil)
+                return
             }
         }
         
