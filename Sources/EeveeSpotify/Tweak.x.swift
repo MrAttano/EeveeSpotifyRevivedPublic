@@ -38,11 +38,26 @@ let tweakInitTime: Date = {
     return now
 }()
 
-/// Set after a successful premium bootstrap UCS patch in this app process.
-/// Persists across Orion/tweak `init()` reinits (e.g. after blocked session destroy on 9.1.34+)
-/// so duplicate bootstrap fetches can be cancelled. Resets naturally on process exit.
-enum EeveeBootstrapProcessGate {
-    static var hasPatchedBootstrap: Bool = false
+/// After a bootstrap UCS patch succeeds, call this once. Orion can reload `EeveeSpotify.dylib`
+/// within the same app process — Swift statics reset — but POSIX `setenv` survives for the
+/// whole process so `NSURLSessionTask` still blocks duplicate bootstrap fetches (see logs on 9.1.34).
+private let eeveeBootstrapPatchedEnv = "EEVEE_BOOTSTRAP_PATCHED"
+
+func eeveeNoteBootstrapPremiumPatchApplied() {
+    let pid = Int(getpid())
+    setenv(eeveeBootstrapPatchedEnv, "1", 1)
+    UserDefaults.eeveeBootstrapPatchPid = pid
+    UserDefaults.hasPatchedBootstrap = true
+}
+
+func eeveeShouldBlockDuplicateBootstrapRequest() -> Bool {
+    if let p = getenv(eeveeBootstrapPatchedEnv), String(cString: p) == "1" {
+        return true
+    }
+    let pid = Int(getpid())
+    return pid != 0
+        && UserDefaults.eeveeBootstrapPatchPid == pid
+        && UserDefaults.hasPatchedBootstrap
 }
 
 func exitApplication() {
@@ -229,11 +244,10 @@ struct EeveeSpotify: Tweak {
     
     init() {
         eeveeBreadcrumb("Tweak init() entered")
-        // Do not reset `UserDefaults.hasPatchedBootstrap` or `EeveeBootstrapProcessGate` here.
-        // Orion calls this `init()` again after internal session re-inits (seen on 9.1.34+).
-        // Clearing bootstrap flags caused the second bootstrap to run unpatched and overwrite
-        // premium product state with free tier. Process exit clears `EeveeBootstrapProcessGate`;
-        // the URLSession hook uses that flag so the first bootstrap of a new process is never cancelled.
+        // Do not reset `UserDefaults.hasPatchedBootstrap` here. Orion calls this `init()` again
+        // after internal session re-inits (9.1.34+); clearing it allowed an unpatched second bootstrap.
+        // Duplicate-bootstrap cancellation relies on `EEVEE_BOOTSTRAP_PATCHED` in the environment
+        // (`setenv` survives Orion dylib reload; the first bootstrap of a new OS process sees no flag).
 
         // Global kill-switch for debugging “instant crash / no logs”.
         // If setting this makes Spotify launch, the crash is definitely in one of our hook activations.

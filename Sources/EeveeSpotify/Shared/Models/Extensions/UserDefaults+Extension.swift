@@ -12,6 +12,8 @@ extension UserDefaults {
     private static let lyricsOptionsKey = "lyricsOptions"
     private static let hasShownCommonIssuesTipKey = "hasShownCommonIssuesTip"
     private static let hasPatchedBootstrapKey = "eeveeHasPatchedBootstrap"
+    /// Stored `getpid()` after a bootstrap patch; cancelling duplicate bootstrap only when it matches avoids blocking first bootstrap across app relaunches while persisting across Orion reloads within one process.
+    private static let bootstrapPatchPidKey = "eeveeBootstrapPatchPid"
 
     static var musixmatchToken: String {
         get {
@@ -67,6 +69,11 @@ extension UserDefaults {
     static var hasPatchedBootstrap: Bool {
         get { container.bool(forKey: hasPatchedBootstrapKey) }
         set { container.set(newValue, forKey: hasPatchedBootstrapKey) }
+    }
+
+    static var eeveeBootstrapPatchPid: Int {
+        get { container.integer(forKey: bootstrapPatchPidKey) }
+        set { container.set(newValue, forKey: bootstrapPatchPidKey) }
     }
 
     static var hasShownCommonIssuesTip: Bool {

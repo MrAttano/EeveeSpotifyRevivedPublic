@@ -341,13 +341,12 @@ class URLSessionTaskResumeHook: ClassHook<NSObject> {
 
             // If we've already patched bootstrap once in this OS process, block any subsequent
             // bootstrap calls. Some 9.1.34+ builds fire a second bootstrap during an internal
-            // session re-init (often right after a blocked `destroy`). That response can be
-            // unpatched free-tier UCS and overwrite premium state.
-            // Use `EeveeBootstrapProcessGate` (not UserDefaults): tweak `init()` runs again on
-            // Orion reinits and used to clear `UserDefaults.hasPatchedBootstrap`, letting the
-            // duplicate bootstrap through while `elapsed` was small again.
-            if path.contains("bootstrap/v1/bootstrap"), EeveeBootstrapProcessGate.hasPatchedBootstrap {
-                writeDebugLog("[NET] Cancelled bootstrap re-fetch (already patched this process) at \(elapsedInt)s")
+            // session re-init. That response can be unpatched free-tier UCS and overwrite premium.
+            // Rely on `setenv`: Orion may reload the dylib — Swift static gates reset — but env
+            // persists for the lifetime of the process (matches debug logs showing no cancellation
+            // when only static/UserDefaults guards were active after reinjection).
+            if path.contains("bootstrap/v1/bootstrap"), eeveeShouldBlockDuplicateBootstrapRequest() {
+                writeDebugLog("[NET] Cancelled bootstrap re-fetch (patched-this-process gate) at \(elapsedInt)s")
                 task.cancel()
                 return
             }
