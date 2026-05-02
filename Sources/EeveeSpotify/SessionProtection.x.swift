@@ -215,16 +215,14 @@ class OauthAccessTokenBridgeHook: ClassHook<NSObject> {
 
     // orion:new
     func startExpiryExtender() {
-        let weak = target
-        // Extend the ivar every 60 seconds
+        let oauthBridgeTarget = target
         DispatchQueue.global(qos: .utility).async {
             while true {
                 Thread.sleep(forTimeInterval: 60)
-                guard let obj = weak as? NSObject else { break }
-                let cls: AnyClass = type(of: obj)
+                let cls: AnyClass = type(of: oauthBridgeTarget)
                 if let ivar = class_getInstanceVariable(cls, "expiresAt") {
                     let farFuture = Date(timeIntervalSinceNow: 365 * 24 * 60 * 60)
-                    object_setIvar(obj, ivar, farFuture)
+                    object_setIvar(oauthBridgeTarget, ivar, farFuture)
                 }
             }
         }

@@ -4,10 +4,10 @@ import Foundation
 /// product state via `[SPTAuthSessionImplementation productStateUpdated:]`. Rewrite obvious free-tier maps.
 func eeveePremiumCoercedProductStateIfNeeded(for state: AnyObject) -> (AnyObject, Bool) {
     guard UserDefaults.patchType.isPatching else { return (state, false) }
-    guard let dict = state as NSDictionary else { return (state, false) }
+    guard let dict = state as? NSDictionary else { return (state, false) }
     guard eeveeProductStateAppearsFreeTier(dict) else { return (state, false) }
 
-    let mutable = NSMutableDictionary(dictionary: dict as NSDictionary)
+    let mutable = NSMutableDictionary(dictionary: dict)
     eeveeApplyPremiumProductStateKeys(to: mutable)
     eeveeStripFreeTierLeakKeys(from: mutable)
     writeDebugLog("[AUTH] Coerced free-tier productState to premium-compatible map")
